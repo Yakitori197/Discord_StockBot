@@ -15,6 +15,28 @@ import os
 import re
 import requests
 from dotenv import load_dotenv
+from threading import Thread
+from flask import Flask
+
+# ===== Flask 保持存活用 =====
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    return "Discord Stock Bot is running!"
+
+@app.route('/health')
+def health():
+    return "OK"
+
+def run_flask():
+    port = int(os.environ.get('PORT', 10000))
+    app.run(host='0.0.0.0', port=port)
+
+def keep_alive():
+    t = Thread(target=run_flask)
+    t.daemon = True
+    t.start()
 
 # 載入環境變數
 load_dotenv()
@@ -1137,4 +1159,5 @@ if __name__ == '__main__':
         print("❌ 錯誤：請在 .env 檔案中設定 DISCORD_BOT_TOKEN")
         print("📝 請複製 .env.example 為 .env 並填入你的機器人 Token")
     else:
+        keep_alive()  # 啟動 Flask 保持存活
         bot.run(token)
