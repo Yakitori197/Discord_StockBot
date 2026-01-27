@@ -1,0 +1,12 @@
+version: '3.8'
+
+services:
+  stock-bot:
+    build: .
+    container_name: discord-stock-bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    # 或者直接設定環境變數
+    # environment:
+    #   - DISCORD_BOT_TOKEN=your_token_here
