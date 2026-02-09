@@ -41,11 +41,31 @@ def keep_alive():
 # 載入環境變數
 load_dotenv()
 
+# 初始化資料庫
+import database  # noqa: F401 - 匯入時自動執行 init_db()
+
 # 機器人設定
 intents = discord.Intents.default()
 intents.message_content = True
+intents.members = True  # 歡迎系統需要
 
 bot = commands.Bot(command_prefix='!', intents=intents)
+
+
+# ===== Cog 載入 =====
+INITIAL_COGS = [
+    'cogs.leveling',
+    'cogs.welcome',
+]
+
+
+async def load_cogs():
+    """載入所有 Cog 模組"""
+    for cog in INITIAL_COGS:
+        try:
+            await bot.load_extension(cog)
+        except Exception as e:
+            print(f'❌ 載入 {cog} 失敗: {e}')
 
 
 # ===== 台股代碼對應中文名稱 =====
@@ -619,6 +639,9 @@ async def on_ready():
     """機器人啟動時執行"""
     print(f'✅ 機器人已上線: {bot.user}')
     print(f'📊 股票查詢機器人準備就緒！')
+    
+    # 載入 Cog 模組
+    await load_cogs()
     
     # 同步斜線命令
     try:
