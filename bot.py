@@ -1192,7 +1192,7 @@ async def on_command_error(ctx, error):
         await ctx.send(f"❌ 發生錯誤：{str(error)}")
 
 
-# 啟動機器人（含 429 重試機制）
+# 啟動機器人（含 429 防護）
 if __name__ == '__main__':
     import time
 
@@ -1214,27 +1214,19 @@ if __name__ == '__main__':
     
     keep_alive()  # 啟動 Flask 保持存活
     
-    # 重試機制：遇到 429 限速時等待後重試，而非直接崩潰
-    MAX_RETRIES = 5
-    for attempt in range(1, MAX_RETRIES + 1):
-        try:
-            print(f"🚀 正在啟動 Discord Bot...（第 {attempt} 次嘗試）")
-            bot.run(token)
-            break  # 正常結束（例如手動關閉）
-        except discord.errors.HTTPException as e:
-            if e.status == 429:
-                wait = min(30 * attempt, 180)  # 30s, 60s, 90s, 120s, 150s
-                print(f"⚠️ 被 Discord 限速 (429)，等待 {wait} 秒後重試...")
-                time.sleep(wait)
-            else:
-                print(f"❌ HTTP 錯誤: {e}")
-                sys.exit(1)
-        except Exception as e:
-            print(f"❌ 啟動失敗: {type(e).__name__}: {e}")
+    try:
+        print("🚀 正在啟動 Discord Bot...")
+        bot.run(token)
+    except discord.errors.HTTPException as e:
+        if e.status == 429:
+            # 被 Discord 限速，等待 120 秒再退出，讓 Render 重啟時不會立即再被擋
+            print("⚠️ 被 Discord 限速 (429)")
+            print("💤 等待 120 秒後退出，讓 Render 重啟...")
+            time.sleep(120)
             sys.exit(1)
-    else:
-        print(f"❌ 重試 {MAX_RETRIES} 次仍失敗，請稍後再部署")
-        # 不要 exit(1)，讓 Flask 保持運行避免 Render 立即重啟再觸發限速
-        print("💤 Flask 保持運行中，等待下次部署...")
-        while True:
-            time.sleep(3600)
+        else:
+            print(f"❌ HTTP 錯誤: {e}")
+            sys.exit(1)
+    except Exception as e:
+        print(f"❌ 啟動失敗: {type(e).__name__}: {e}")
+        sys.exit(1)
