@@ -4,6 +4,11 @@ Discord 股票資訊機器人
 支援：純數字台股代碼、股票名稱搜尋（不限大小寫）
 """
 
+import sys
+print(f"🐍 Python {sys.version}")
+print(f"📂 工作目錄: {__import__('os').getcwd()}")
+print(f"📁 目錄內容: {__import__('os').listdir('.')}")
+
 import discord
 from discord.ext import commands
 from discord import app_commands
@@ -17,6 +22,8 @@ import requests
 from dotenv import load_dotenv
 from threading import Thread
 from flask import Flask
+
+print("✅ 所有套件匯入成功")
 
 # ===== Flask 保持存活用 =====
 app = Flask(__name__)
@@ -42,7 +49,12 @@ def keep_alive():
 load_dotenv()
 
 # 初始化資料庫
-import database  # noqa: F401 - 匯入時自動執行 init_db()
+try:
+    import database  # noqa: F401 - 匯入時自動執行 init_db()
+    DB_AVAILABLE = True
+except Exception as e:
+    print(f'⚠️ 資料庫模組載入失敗: {e}')
+    DB_AVAILABLE = False
 
 # 機器人設定
 intents = discord.Intents.default()
@@ -61,11 +73,20 @@ INITIAL_COGS = [
 
 async def load_cogs():
     """載入所有 Cog 模組"""
+    if not DB_AVAILABLE:
+        print('⚠️ 資料庫不可用，跳過 Cog 載入')
+        return
     for cog in INITIAL_COGS:
         try:
             await bot.load_extension(cog)
         except Exception as e:
-            print(f'❌ 載入 {cog} 失敗: {e}')
+            print(f'❌ 載入 {cog} 失敗: {type(e).__name__}: {e}')
+
+
+@bot.event
+async def setup_hook():
+    """Bot 啟動前的準備工作（只執行一次）"""
+    await load_cogs()
 
 
 # ===== 台股代碼對應中文名稱 =====
@@ -640,9 +661,6 @@ async def on_ready():
     print(f'✅ 機器人已上線: {bot.user}')
     print(f'📊 股票查詢機器人準備就緒！')
     
-    # 載入 Cog 模組
-    await load_cogs()
-    
     # 同步斜線命令
     try:
         synced = await bot.tree.sync()
@@ -1174,13 +1192,49 @@ async def on_command_error(ctx, error):
         await ctx.send(f"❌ 發生錯誤：{str(error)}")
 
 
-# 啟動機器人
+# 啟動機器人（含 429 重試機制）
 if __name__ == '__main__':
+    import time
+
     token = os.getenv('DISCORD_BOT_TOKEN')
     
     if not token:
         print("❌ 錯誤：請在 .env 檔案中設定 DISCORD_BOT_TOKEN")
         print("📝 請複製 .env.example 為 .env 並填入你的機器人 Token")
+        sys.exit(1)
+    
+    print(f"🔑 Token 已讀取（長度: {len(token)}）")
+    print(f"📦 DB 模組: {'✅' if DB_AVAILABLE else '❌'}")
+    
+    # 檢查 cogs 目錄
+    if os.path.isdir('cogs'):
+        print(f"📁 cogs 目錄: {os.listdir('cogs')}")
     else:
-        keep_alive()  # 啟動 Flask 保持存活
-        bot.run(token)
+        print("⚠️ cogs 目錄不存在")
+    
+    keep_alive()  # 啟動 Flask 保持存活
+    
+    # 重試機制：遇到 429 限速時等待後重試，而非直接崩潰
+    MAX_RETRIES = 5
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            print(f"🚀 正在啟動 Discord Bot...（第 {attempt} 次嘗試）")
+            bot.run(token)
+            break  # 正常結束（例如手動關閉）
+        except discord.errors.HTTPException as e:
+            if e.status == 429:
+                wait = min(30 * attempt, 180)  # 30s, 60s, 90s, 120s, 150s
+                print(f"⚠️ 被 Discord 限速 (429)，等待 {wait} 秒後重試...")
+                time.sleep(wait)
+            else:
+                print(f"❌ HTTP 錯誤: {e}")
+                sys.exit(1)
+        except Exception as e:
+            print(f"❌ 啟動失敗: {type(e).__name__}: {e}")
+            sys.exit(1)
+    else:
+        print(f"❌ 重試 {MAX_RETRIES} 次仍失敗，請稍後再部署")
+        # 不要 exit(1)，讓 Flask 保持運行避免 Render 立即重啟再觸發限速
+        print("💤 Flask 保持運行中，等待下次部署...")
+        while True:
+            time.sleep(3600)
