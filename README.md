@@ -1,171 +1,100 @@
-# 📈 Discord 股票資訊機器人
+# Discord 股票資訊機器人
 
-一個功能完整的 Discord 股票查詢機器人，**智慧識別**股票代碼與名稱，支援查詢全球股票的開盤價、收盤價、交易量、漲跌幅等即時資訊。
+以 Discord 指令查詢全球股票、台股與市場指數，並提供等級、歡迎訊息和角色獎勵功能。
 
-## ✨ 功能特色
+## 功能
 
-- 🎯 **智慧識別**: 自動識別台股代碼、英文名稱、中文名稱
-- 🔍 **股票查詢**: 查詢任何股票的完整資訊
-- 📊 **股票比較**: 同時比較多檔股票的表現
-- 📅 **歷史價格**: 查詢過去 30 天內的歷史價格走勢
-- 🌍 **市場指數**: 一鍵查詢全球主要市場指數
-- 🎨 **美觀介面**: 使用 Discord Embed 呈現精美的資訊卡片
+- 自動辨識台股代碼、英文或中文股票名稱
+- 股票現價、歷史價格、市場指數與多股票比較
+- Discord prefix commands 與 slash commands
+- 非同步網路請求，不阻塞 Discord event loop
+- 會員等級、排行榜、角色獎勵與歡迎設定
+- PostgreSQL 正式儲存；本機開發可 fallback 至 SQLite
+- liveness、readiness、啟動退避與乾淨 SIGTERM 關閉
 
-## 🎯 智慧識別功能
+## 系統需求
 
-使用者可以用多種方式查詢股票，機器人會自動識別：
+- Python 3.13.14
+- Discord application 與 Bot token
+- 正式部署需要 PostgreSQL
 
-| 輸入方式 | 範例 | 自動轉換 |
-|----------|------|----------|
-| 純數字（台股） | `2330` | → `2330.TW` (台積電) |
-| 英文名稱 | `nvidia` | → `NVDA` |
-| 中文名稱 | `台積電` | → `2330.TW` |
-| 完整代碼 | `AAPL` | → `AAPL` |
+## 本機快速開始
 
-### 支援的名稱對照（部分）
+建立並啟用虛擬環境後安裝依賴：
 
-**美股：**
-- `nvidia` / `apple` / `microsoft` / `google` / `amazon` / `meta` / `tesla`
-- `amd` / `intel` / `netflix` / `uber` / `airbnb` / `disney` ...
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.lock
+```
 
-**台股（中文）：**
-- `台積電` / `鴻海` / `聯發科` / `台達電` / `大立光`
-- `富邦金` / `國泰金` / `中信金` / `長榮` / `陽明` ...
+只在目前的 shell 設定必要值，再啟動 Bot：
 
-**台股（英文）：**
-- `tsmc` / `foxconn` / `mediatek` / `asus` / `acer` ...
-
-**港股：**
-- `騰訊` / `tencent` / `阿里巴巴` / `alibaba` / `小米` ...
-
-## 🚀 快速開始
-
-### 1. 建立 Discord 機器人
-
-1. 前往 [Discord Developer Portal](https://discord.com/developers/applications)
-2. 點擊 **New Application** 建立新應用程式
-3. 在左側選單選擇 **Bot**
-4. 點擊 **Reset Token** 取得機器人 Token
-
-### 2. 設定機器人權限
-
-在 **OAuth2 > URL Generator** 中勾選：
-- **Scopes**: `bot`, `applications.commands`
-- **Bot Permissions**: `Send Messages`, `Embed Links`, `Read Message History`, `Use Slash Commands`
-
-### 3. 安裝與執行
-
-```bash
-# 安裝依賴
-pip install -r requirements.txt
-
-# 設定環境變數
-cp .env.example .env
-# 編輯 .env 填入 Discord Bot Token
-
-# 啟動機器人
+```powershell
+$env:DISCORD_BOT_TOKEN = "<set-locally>"
 python bot.py
 ```
 
-## 📖 指令說明
+未設定 `DATABASE_URL` 時，本機會使用 SQLite。這個 fallback 只適合開發與測試。
 
-### 股票查詢
+## Render 部署
 
-```
-!stock 2330          # 查詢台積電（純數字自動加 .TW）
-!stock nvidia        # 查詢 NVIDIA（自動轉換為 NVDA）
-!stock 台積電        # 查詢台積電（中文名稱）
-!s apple            # 簡寫指令
-```
+`render.yaml` 使用 Python web service，啟動指令為 `python bot.py`。
 
-### 快速查價
+自動部署預設關閉。GitHub push 或 merge 不會直接部署正式服務；完成資料遷移與 staging 驗證後，請由 Render Dashboard 人工觸發部署。
 
-```
-!price 2330         # 快速查詢台積電股價
-!p nvidia           # 簡寫指令
-```
+部署前在 Render Dashboard 設定：
 
-### 股票比較
+- `DISCORD_BOT_TOKEN`：Discord Bot 的秘密憑證
+- `DATABASE_URL`：Render PostgreSQL 提供的 managed connection value
+- `REQUIRE_DURABLE_STORAGE=true`：禁止正式環境退回臨時 SQLite
+- `SYNC_COMMANDS_ON_START=false`：一般重啟不重複同步全域指令
 
-```
-!compare 2330 nvidia apple    # 比較多檔股票
-!c 台積電 鴻海 聯發科          # 支援中文
-```
+Render 平台 health check 使用 `/live`。`/health` 是 Discord readiness：未連線回 503，連線完成回 200。
 
-### 搜尋股票
+首次切換 PostgreSQL 前，請依照 [PostgreSQL migration runbook](docs/postgres-migration.md) 執行 dry-run、原子遷移及筆數驗證。
 
-```
-!search semiconductor         # 搜尋半導體相關股票
-!find tech                    # 搜尋科技股
-```
+## Docker
 
-### 歷史價格
+先在主機 shell 設定必要環境變數，再傳入容器；不要將實際值寫進 image、compose file 或命令歷史：
 
-```
-!history 2330 14              # 查詢 14 天歷史
-!h nvidia 7                   # 查詢 7 天歷史
-```
-
-### 市場指數
-
-```
-!market                       # 查詢全球主要市場指數
-!m                            # 簡寫
-```
-
-## 📊 顯示資訊範例
-
-```
-📈 2330.TW - Taiwan Semiconductor Manufacturing Company Limited
-🇹🇼 自動識別為台股代碼
-
-💰 當前價格: 1,085.00 TWD
-📊 漲跌幅: +15.00 (+1.40%)
-
-🔓 開盤價: 1,070.00    ⬆️ 最高價: 1,090.00    ⬇️ 最低價: 1,065.00
-📦 成交量: 28.5M       📈 平均成交量: 32.1M
-📅 52週最高: 1,125.00  📅 52週最低: 543.00
-🏢 市值: 28.13T        📊 本益比: 32.45
-🏭 產業: Technology / Semiconductors
-```
-
-## 🐳 Docker 部署
-
-```bash
+```powershell
 docker build -t discord-stock-bot .
-docker run -d --env-file .env discord-stock-bot
+docker run --rm -e DISCORD_BOT_TOKEN -e DATABASE_URL discord-stock-bot
 ```
 
-或使用 docker-compose:
+## 常用指令
 
-```bash
-docker-compose up -d
+```text
+!stock 2330
+!stock nvidia
+!price AAPL
+!compare 2330 AAPL NVDA
+!history 2330 14
+!market
+!level
+!rank
 ```
 
-## ⚙️ 自訂名稱對照表
+全域 slash commands 預設不會在每次重啟時同步。Bot 擁有者可在需要時執行 `!sync`。
 
-編輯 `bot.py` 中的 `STOCK_NAME_MAP` 字典來新增更多名稱對照：
+## 測試
 
-```python
-STOCK_NAME_MAP = {
-    # 新增自訂對照
-    '你的名稱': '股票代碼',
-    'custom_name': 'SYMBOL',
-    ...
-}
+```powershell
+python -m pip install -r requirements-dev.txt
+python -m pytest -q
 ```
 
-## ⚠️ 注意事項
+測試涵蓋啟動退避、指令同步閘門、健康端點、SIGTERM、SQLite 非同步 contract、併發 XP 更新，以及遷移 snapshot 的完整性與隱私輸出。
 
-1. **資料延遲**: 股票資料來自 Yahoo Finance，可能有 15-20 分鐘的延遲
-2. **API 限制**: 請避免過於頻繁的查詢
-3. **投資風險**: 本機器人僅供資訊參考，不構成投資建議
-4. **Token 安全**: 請勿將 Discord Bot Token 公開
+## 安全與資料
 
-## 📄 授權條款
+- 不要把憑證、真實連線字串、資料庫快照或私人紀錄提交到 Git。
+- 正式環境不允許使用 Render 臨時檔案系統保存 Bot 狀態。
+- 遷移工具不輸出資料列、使用者名稱、Discord ID 或連線資訊。
+- Discord 使用者看到固定友善錯誤；內部日誌只記錄錯誤類型。
+- 股票資料可能延遲，本專案不構成投資建議。
+
+## 授權
 
 MIT License
-
----
-
-**⚠️ 免責聲明**: 本機器人提供的所有資訊僅供參考，不構成投資建議。投資有風險，請謹慎評估。

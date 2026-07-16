@@ -1,12 +1,12 @@
-version: '3.8'
-
 services:
-  stock-bot:
+  bot:
     build: .
-    container_name: discord-stock-bot
     restart: unless-stopped
-    env_file:
-      - .env
-    # 或者直接設定環境變數
-    # environment:
-    #   - DISCORD_BOT_TOKEN=your_token_here
+    environment:
+      DISCORD_BOT_TOKEN: ${DISCORD_BOT_TOKEN:?set in the host environment}
+      DATABASE_URL: ${DATABASE_URL:-}
+      REQUIRE_DURABLE_STORAGE: ${REQUIRE_DURABLE_STORAGE:-false}
+      SYNC_COMMANDS_ON_START: ${SYNC_COMMANDS_ON_START:-false}
+      PORT: "10000"
+    ports:
+      - "10000:10000"

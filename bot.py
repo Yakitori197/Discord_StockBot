@@ -5,9 +5,6 @@ Discord 股票資訊機器人
 """
 
 import sys
-print(f"🐍 Python {sys.version}")
-print(f"📂 工作目錄: {__import__('os').getcwd()}")
-print(f"📁 目錄內容: {__import__('os').listdir('.')}")
 
 import discord
 from discord.ext import commands
@@ -19,13 +16,23 @@ from typing import Optional, Tuple
 import os
 import re
 import requests
-from dotenv import load_dotenv
 from threading import Thread
+import signal
+import logging
 from flask import Flask
 
-print("✅ 所有套件匯入成功")
+import reliability
 
-# ===== Flask 保持存活用 =====
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
+logger = logging.getLogger("discord_stockbot")
+
+# 就緒狀態：區分 liveness（行程存活）與 readiness（Discord 連線完成）
+readiness = reliability.ReadinessState()
+
+# ===== Flask 保活 / 健康檢查 =====
 app = Flask(__name__)
 
 @app.route('/')
@@ -34,7 +41,16 @@ def home():
 
 @app.route('/health')
 def health():
-    return "OK"
+    """readiness：只有 bot 真正連上 Discord 才回 200，否則 503。
+    此端點供監控 Discord 連線狀態；Render 行程健康檢查使用 /live。"""
+    if readiness.is_ready():
+        return "READY", 200
+    return "NOT_READY", 503
+
+@app.route('/live')
+def live():
+    """liveness：行程存活即回 200（Flask 能回應代表行程還活著）。"""
+    return "OK", 200
 
 def run_flask():
     port = int(os.environ.get('PORT', 10000))
@@ -45,16 +61,8 @@ def keep_alive():
     t.daemon = True
     t.start()
 
-# 載入環境變數
-load_dotenv()
-
-# 初始化資料庫
-try:
-    import database  # noqa: F401 - 匯入時自動執行 init_db()
-    DB_AVAILABLE = True
-except Exception as e:
-    print(f'⚠️ 資料庫模組載入失敗: {e}')
-    DB_AVAILABLE = False
+# 資料層在 setup_hook 中非同步初始化
+import database
 
 # 機器人設定
 intents = discord.Intents.default()
@@ -72,22 +80,25 @@ INITIAL_COGS = [
 
 
 async def load_cogs():
-    """載入所有 Cog 模組"""
-    if not DB_AVAILABLE:
-        print('⚠️ 資料庫不可用，跳過 Cog 載入')
-        return
+    """載入所有 Cog 模組。"""
     for cog in INITIAL_COGS:
         try:
             await bot.load_extension(cog)
-        except Exception as e:
-            print(f'❌ 載入 {cog} 失敗: {type(e).__name__}: {e}')
+        except Exception as exc:
+            logger.error("Cog 載入失敗（%s）", type(exc).__name__)
+            raise
 
 
 @bot.event
 async def setup_hook():
-    """Bot 啟動前的準備工作（只執行一次）"""
+    """初始化持久化資料層，再載入依賴它的 cogs。"""
+    try:
+        await database.initialize()
+        logger.info("資料層初始化完成（backend=%s）", database.backend_name())
+    except Exception as exc:
+        logger.error("資料層初始化失敗（%s）", type(exc).__name__)
+        raise
     await load_cogs()
-
 
 # ===== 台股代碼對應中文名稱 =====
 TW_STOCK_NAMES = {
@@ -657,24 +668,58 @@ def create_stock_embed(data: dict, resolve_msg: str = None) -> discord.Embed:
 
 @bot.event
 async def on_ready():
-    """機器人啟動時執行"""
-    print(f'✅ 機器人已上線: {bot.user}')
-    print(f'📊 股票查詢機器人準備就緒！')
-    
-    # 同步斜線命令
+    """機器人啟動 / 重連完成時執行"""
+    logger.info('Discord 連線已就緒')
+    readiness.set_ready()  # readiness：Discord 連線完成
+
+    # 只有在明確要求時才同步全域斜線指令。
+    # 一般重啟不同步，避免對 Discord 全域指令 API 反覆呼叫而觸發 429。
+    if reliability.should_sync_commands(os.getenv('SYNC_COMMANDS_ON_START')):
+        try:
+            synced = await bot.tree.sync()
+            logger.info(f'已同步 {len(synced)} 個全域斜線指令（SYNC_COMMANDS_ON_START 已啟用）')
+        except discord.HTTPException as e:
+            logger.warning(f'同步指令失敗（{reliability.classify_startup_error(e)}）')
+    else:
+        logger.info('略過全域指令同步（一般重啟）。需同步請設 SYNC_COMMANDS_ON_START=true 或用管理指令 !sync')
+
+    try:
+        await bot.change_presence(
+            activity=discord.Activity(
+                type=discord.ActivityType.watching,
+                name="股市行情 | !stock"
+            )
+        )
+    except discord.HTTPException as e:
+        logger.warning(f'設定狀態失敗（{type(e).__name__}）')
+
+
+@bot.event
+async def on_disconnect():
+    """與 Discord 斷線：標記 not-ready（/health 會回 503）。"""
+    readiness.set_not_ready()
+
+
+@bot.event
+async def on_resumed():
+    """重連成功：標記 ready。"""
+    readiness.set_ready()
+
+
+@bot.command(name='sync')
+@commands.is_owner()
+async def sync_command(ctx):
+    """（限機器人擁有者）手動同步全域斜線指令；一般重啟不會自動同步。"""
     try:
         synced = await bot.tree.sync()
-        print(f'🔄 已同步 {len(synced)} 個斜線命令')
-    except Exception as e:
-        print(f'❌ 同步命令失敗: {e}')
-    
-    # 設定狀態
-    await bot.change_presence(
-        activity=discord.Activity(
-            type=discord.ActivityType.watching,
-            name="股市行情 | !stock"
-        )
-    )
+        await ctx.send(f"✅ 已同步 {len(synced)} 個斜線指令")
+    except discord.HTTPException as e:
+        kind = reliability.classify_startup_error(e)
+        if kind == "rate_limited":
+            await ctx.send("⚠️ 被 Discord 限速（429），請稍後再試")
+        else:
+            await ctx.send("❌ 同步失敗")
+        logger.warning(f'手動同步失敗（{kind}）')
 
 
 @bot.command(name='stock', aliases=['s', '股票', 'q', '查'])
@@ -1184,49 +1229,124 @@ async def help_stock_command(ctx):
 @bot.event
 async def on_command_error(ctx, error):
     if isinstance(error, commands.MissingRequiredArgument):
-        await ctx.send(f"❌ 缺少必要參數！請使用 `!help` 查看使用說明。")
+        await ctx.send("❌ 缺少必要參數，請使用 `!help` 查看使用說明。")
     elif isinstance(error, commands.CommandNotFound):
-        pass  # 忽略不存在的命令
+        return
     else:
-        print(f"Error: {error}")
-        await ctx.send(f"❌ 發生錯誤：{str(error)}")
+        logger.error("指令執行失敗（%s）", type(error).__name__)
+        await ctx.send("❌ 指令執行失敗，請稍後再試。")
+
+# ===== 啟動 =====
+def _install_signal_handlers(loop, shutdown_event: asyncio.Event):
+    """將 Render 的關機訊號轉成非同步乾淨關閉。"""
+    def _graceful():
+        if shutdown_event.is_set():
+            return
+        readiness.set_not_ready()
+        shutdown_event.set()
+        logger.info("收到關機訊號，正在乾淨關閉")
+        loop.create_task(bot.close())
+
+    for signame in ("SIGTERM", "SIGINT"):
+        sig = getattr(signal, signame, None)
+        if sig is None:
+            continue
+        try:
+            loop.add_signal_handler(sig, _graceful)
+        except (NotImplementedError, RuntimeError):
+            pass
 
 
-# 啟動機器人（含 429 防護）
-if __name__ == '__main__':
-    import time
-
-    token = os.getenv('DISCORD_BOT_TOKEN')
-    
-    if not token:
-        print("❌ 錯誤：請在 .env 檔案中設定 DISCORD_BOT_TOKEN")
-        print("📝 請複製 .env.example 為 .env 並填入你的機器人 Token")
-        sys.exit(1)
-    
-    print(f"🔑 Token 已讀取（長度: {len(token)}）")
-    print(f"📦 DB 模組: {'✅' if DB_AVAILABLE else '❌'}")
-    
-    # 檢查 cogs 目錄
-    if os.path.isdir('cogs'):
-        print(f"📁 cogs 目錄: {os.listdir('cogs')}")
-    else:
-        print("⚠️ cogs 目錄不存在")
-    
-    keep_alive()  # 啟動 Flask 保持存活
-    
+async def _wait_for_retry(delay: float, shutdown_event: asyncio.Event) -> bool:
+    """Wait without blocking; return True when shutdown interrupts the wait."""
+    if delay <= 0:
+        await asyncio.sleep(0)
+        return shutdown_event.is_set()
     try:
-        print("🚀 正在啟動 Discord Bot...")
-        bot.run(token)
-    except discord.errors.HTTPException as e:
-        if e.status == 429:
-            # 被 Discord 限速，等待 120 秒再退出，讓 Render 重啟時不會立即再被擋
-            print("⚠️ 被 Discord 限速 (429)")
-            print("💤 等待 120 秒後退出，讓 Render 重啟...")
-            time.sleep(120)
-            sys.exit(1)
-        else:
-            print(f"❌ HTTP 錯誤: {e}")
-            sys.exit(1)
-    except Exception as e:
-        print(f"❌ 啟動失敗: {type(e).__name__}: {e}")
+        await asyncio.wait_for(shutdown_event.wait(), timeout=delay)
+        return True
+    except TimeoutError:
+        return False
+
+
+async def _run_bot(token: str, backoff=None):
+    """Run Discord with bounded in-process startup retries and clean shutdown."""
+    retry_policy = backoff or reliability.StartupBackoff(
+        base=2.0,
+        factor=2.0,
+        cap=300.0,
+        max_retries=6,
+        jitter=0.5,
+        cooldown=60.0,
+    )
+    shutdown_event = asyncio.Event()
+    _install_signal_handlers(asyncio.get_running_loop(), shutdown_event)
+
+    try:
+        async with bot:
+            while not shutdown_event.is_set():
+                try:
+                    logger.info("正在啟動 Discord Bot")
+                    await bot.start(token, reconnect=True)
+                    logger.info("Bot 已乾淨關閉")
+                    return
+                except discord.LoginFailure:
+                    logger.error("啟動驗證失敗；請檢查部署端機密設定")
+                    raise SystemExit(1)
+                except discord.HTTPException as exc:
+                    readiness.set_not_ready()
+                    kind = reliability.classify_startup_error(exc)
+                    retry_after = reliability.parse_retry_after(exc)
+                    delay = retry_policy.next_delay(retry_after=retry_after)
+                    exhausted = delay is None
+                    if exhausted:
+                        delay = retry_policy.cooldown
+                    logger.warning(
+                        "啟動失敗（kind=%s status=%s）；%.1f 秒後%s",
+                        kind,
+                        getattr(exc, "status", "unknown"),
+                        delay,
+                        "退出" if exhausted else "重試",
+                    )
+                    if await _wait_for_retry(delay, shutdown_event):
+                        return
+                    if exhausted:
+                        raise SystemExit(1)
+                except (OSError, TimeoutError) as exc:
+                    readiness.set_not_ready()
+                    delay = retry_policy.next_delay()
+                    exhausted = delay is None
+                    if exhausted:
+                        delay = retry_policy.cooldown
+                    logger.warning(
+                        "啟動網路錯誤（%s）；%.1f 秒後%s",
+                        type(exc).__name__,
+                        delay,
+                        "退出" if exhausted else "重試",
+                    )
+                    if await _wait_for_retry(delay, shutdown_event):
+                        return
+                    if exhausted:
+                        raise SystemExit(1)
+                except Exception as exc:
+                    logger.error("啟動失敗（%s）", type(exc).__name__)
+                    raise SystemExit(1)
+    finally:
+        readiness.set_not_ready()
+        await database.close()
+
+
+if __name__ == '__main__':
+    token = os.getenv('DISCORD_BOT_TOKEN')
+    if not token:
+        logger.error("啟動所需的部署端機密設定不存在")
         sys.exit(1)
+
+    keep_alive()
+
+    try:
+        asyncio.run(_run_bot(token))
+    except SystemExit:
+        raise
+    except KeyboardInterrupt:
+        logger.info("手動中斷")
