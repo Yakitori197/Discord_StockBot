@@ -687,15 +687,15 @@ async def stock_command(ctx, *, query: str):
         # 解析使用者輸入
         symbol, resolve_msg = resolve_stock_symbol(query)
         
-        data = get_stock_info(symbol)
+        data = await asyncio.to_thread(get_stock_info, symbol)
         
         if data is None:
             # 如果第一次找不到，嘗試線上搜尋
-            search_result = search_stock_by_name(query)
+            search_result = await asyncio.to_thread(search_stock_by_name, query)
             if search_result and search_result != symbol:
                 symbol = search_result
                 resolve_msg = None
-                data = get_stock_info(symbol)
+                data = await asyncio.to_thread(get_stock_info, symbol)
         
         if data is None:
             await ctx.send(
@@ -720,15 +720,15 @@ async def stock_slash(interaction: discord.Interaction, query: str):
     # 解析使用者輸入
     symbol, resolve_msg = resolve_stock_symbol(query)
     
-    data = get_stock_info(symbol)
+    data = await asyncio.to_thread(get_stock_info, symbol)
     
     if data is None:
         # 如果第一次找不到，嘗試線上搜尋
-        search_result = search_stock_by_name(query)
+        search_result = await asyncio.to_thread(search_stock_by_name, query)
         if search_result and search_result != symbol:
             symbol = search_result
             resolve_msg = None
-            data = get_stock_info(symbol)
+            data = await asyncio.to_thread(get_stock_info, symbol)
     
     if data is None:
         await interaction.followup.send(
@@ -767,13 +767,13 @@ async def compare_command(ctx, *queries: str):
         
         for query in queries:
             symbol, _ = resolve_stock_symbol(query)
-            data = get_stock_info(symbol)
+            data = await asyncio.to_thread(get_stock_info, symbol)
             
             if data is None:
                 # 嘗試線上搜尋
-                search_result = search_stock_by_name(query)
+                search_result = await asyncio.to_thread(search_stock_by_name, query)
                 if search_result:
-                    data = get_stock_info(search_result)
+                    data = await asyncio.to_thread(get_stock_info, search_result)
             
             if data:
                 change_emoji = get_change_emoji(data['change'])
@@ -830,12 +830,12 @@ async def compare_slash(
     
     for query in queries:
         symbol, _ = resolve_stock_symbol(query)
-        data = get_stock_info(symbol)
+        data = await asyncio.to_thread(get_stock_info, symbol)
         
         if data is None:
-            search_result = search_stock_by_name(query)
+            search_result = await asyncio.to_thread(search_stock_by_name, query)
             if search_result:
-                data = get_stock_info(search_result)
+                data = await asyncio.to_thread(get_stock_info, search_result)
         
         if data:
             change_emoji = get_change_emoji(data['change'])
@@ -871,12 +871,12 @@ async def price_command(ctx, *, query: str):
     """
     async with ctx.typing():
         symbol, resolve_msg = resolve_stock_symbol(query)
-        data = get_stock_info(symbol)
+        data = await asyncio.to_thread(get_stock_info, symbol)
         
         if data is None:
-            search_result = search_stock_by_name(query)
+            search_result = await asyncio.to_thread(search_stock_by_name, query)
             if search_result:
-                data = get_stock_info(search_result)
+                data = await asyncio.to_thread(get_stock_info, search_result)
         
         if data is None:
             await ctx.send(f"❌ 找不到 `{query}` 對應的股票")
@@ -962,7 +962,7 @@ async def history_command(ctx, query: str, days: int = 7):
             
             if hist.empty:
                 # 嘗試線上搜尋
-                search_result = search_stock_by_name(query)
+                search_result = await asyncio.to_thread(search_stock_by_name, query)
                 if search_result:
                     symbol = search_result
                     stock = yf.Ticker(symbol)
@@ -1062,7 +1062,7 @@ async def market_command(ctx):
         )
         
         for symbol, name in indices:
-            data = get_stock_info(symbol)
+            data = await asyncio.to_thread(get_stock_info, symbol)
             if data:
                 change_emoji = get_change_emoji(data['change'])
                 value = (
@@ -1097,7 +1097,7 @@ async def market_slash(interaction: discord.Interaction):
     )
     
     for symbol, name in indices:
-        data = get_stock_info(symbol)
+        data = await asyncio.to_thread(get_stock_info, symbol)
         if data:
             change_emoji = get_change_emoji(data['change'])
             value = (
