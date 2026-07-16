@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+env/
+
+# 環境變數（勿提交真實金鑰）
+.env
+.env.*
+!.env.example
+
+# 資料庫與執行時資料
+*.db
+*.sqlite3
+data/*.db
+
+# 日誌
+*.log
+logs/
+
+# Windows
+Thumbs.db
+Desktop.ini
