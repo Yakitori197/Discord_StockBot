@@ -1,16 +1,18 @@
-FROM python:3.11-slim
+FROM python:3.13.14-slim
 
-# 設定工作目錄
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
 WORKDIR /app
 
-# 複製依賴檔案
-COPY requirements.txt .
+RUN addgroup --system app && adduser --system --ingroup app app
 
-# 安裝依賴
-RUN pip install --no-cache-dir -r requirements.txt
+COPY requirements.lock .
+RUN pip install --no-cache-dir --requirement requirements.lock
 
-# 複製程式碼
-COPY . .
+COPY --chown=app:app . .
 
-# 啟動機器人
+USER app
+EXPOSE 10000
+
 CMD ["python", "bot.py"]

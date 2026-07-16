@@ -2,10 +2,37 @@ services:
   - type: web
     name: discord-stock-bot
     runtime: python
-    buildCommand: pip install -r requirements.txt
+    buildCommand: pip install -r requirements.lock
     startCommand: python bot.py
+
+    # Render 使用 liveness，避免外部 Discord 短暫斷線造成重啟循環。
+    # /health 仍保留為 Discord readiness 監控端點。
+    healthCheckPath: /live
+
+    # 正常部署替換時 Render 送 SIGTERM，給足夠時間乾淨關閉（bot.close），
+    # 讓正常替換不被記成應用程式崩潰。
+    maxShutdownDelaySeconds: 60
+
+    # 只有實際影響執行的變更才觸發自動部署；純文件/設定/測試改動不重啟服務，
+    # 避免像「加 .gitignore / 改 README」這種非程式碼變更也觸發重新部署。
+    autoDeployTrigger: commit
+    buildFilter:
+      ignoredPaths:
+        - "**/*.md"
+        - ".gitignore"
+        - "tests/**"
+        - "LICENSE"
+
     envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: REQUIRE_DURABLE_STORAGE
+        value: 'true'
       - key: DISCORD_BOT_TOKEN
         sync: false
       - key: PORT
         value: 10000
+      # 一般重啟「不」同步全域斜線指令，避免反覆呼叫 Discord 全域指令 API 觸發 429。
+      # 指令有變更時：暫設為 true 部署一次、之後改回 false，或用管理指令 !sync。
+      - key: SYNC_COMMANDS_ON_START
+        value: "false"

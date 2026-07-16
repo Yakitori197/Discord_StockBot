@@ -32,10 +32,10 @@ class Welcome(commands.Cog):
 
         guild = member.guild
         guild_id = str(guild.id)
-        settings = get_guild_settings(guild_id)
+        settings = await get_guild_settings(guild_id)
 
         # 記錄加入
-        log_welcome(guild_id, str(member.id), str(member))
+        await log_welcome(guild_id, str(member.id), str(member))
 
         # 發送歡迎訊息
         welcome_channel_id = settings.get('welcome_channel_id')
@@ -86,7 +86,7 @@ class Welcome(commands.Cog):
 
         guild = member.guild
         guild_id = str(guild.id)
-        settings = get_guild_settings(guild_id)
+        settings = await get_guild_settings(guild_id)
 
         # 在歡迎頻道或 log 頻道通知
         channel_id = settings.get('log_channel_id') or settings.get('welcome_channel_id')
@@ -124,7 +124,7 @@ class Welcome(commands.Cog):
         用法: !setwelcome #頻道
         """
         guild_id = str(ctx.guild.id)
-        update_guild_settings(guild_id, welcome_channel_id=str(channel.id))
+        await update_guild_settings(guild_id, welcome_channel_id=str(channel.id))
 
         embed = discord.Embed(
             title="✅ 歡迎頻道設定完成",
@@ -141,7 +141,7 @@ class Welcome(commands.Cog):
         用法: !setrules #頻道
         """
         guild_id = str(ctx.guild.id)
-        update_guild_settings(guild_id, rules_channel_id=str(channel.id))
+        await update_guild_settings(guild_id, rules_channel_id=str(channel.id))
 
         embed = discord.Embed(
             title="✅ 規則頻道設定完成",
@@ -159,7 +159,7 @@ class Welcome(commands.Cog):
         變數: {user} @提及, {username} 名稱, {server} 伺服器, {member_count} 人數
         """
         guild_id = str(ctx.guild.id)
-        update_guild_settings(guild_id, welcome_message=message)
+        await update_guild_settings(guild_id, welcome_message=message)
 
         # 預覽
         preview = self._format_welcome(message, ctx.author, ctx.guild)
@@ -185,7 +185,7 @@ class Welcome(commands.Cog):
         用法: !testwelcome
         """
         guild_id = str(ctx.guild.id)
-        settings = get_guild_settings(guild_id)
+        settings = await get_guild_settings(guild_id)
 
         welcome_msg = settings.get('welcome_message') or DEFAULT_WELCOME_MSG
         formatted_msg = self._format_welcome(welcome_msg, ctx.author, ctx.guild)
@@ -217,7 +217,7 @@ class Welcome(commands.Cog):
         用法: !welcomeinfo
         """
         guild_id = str(ctx.guild.id)
-        settings = get_guild_settings(guild_id)
+        settings = await get_guild_settings(guild_id)
 
         embed = discord.Embed(
             title=f"📋 {ctx.guild.name} 歡迎系統設定",
