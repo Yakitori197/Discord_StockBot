@@ -41,6 +41,8 @@ python bot.py
 
 `render.yaml` 使用 Python web service，啟動指令為 `python bot.py`。
 
+自動部署預設關閉。GitHub push 或 merge 不會直接部署正式服務；完成資料遷移與 staging 驗證後，請由 Render Dashboard 人工觸發部署。
+
 部署前在 Render Dashboard 設定：
 
 - `DISCORD_BOT_TOKEN`：Discord Bot 的秘密憑證

@@ -13,9 +13,9 @@ services:
     # 讓正常替換不被記成應用程式崩潰。
     maxShutdownDelaySeconds: 60
 
-    # 只有實際影響執行的變更才觸發自動部署；純文件/設定/測試改動不重啟服務，
-    # 避免像「加 .gitignore / 改 README」這種非程式碼變更也觸發重新部署。
-    autoDeployTrigger: commit
+    # GitHub push / merge 不自動部署；資料遷移與 staging 驗證完成後，
+    # 由管理者在 Render Dashboard 人工觸發部署。
+    autoDeployTrigger: off
     buildFilter:
       ignoredPaths:
         - "**/*.md"
