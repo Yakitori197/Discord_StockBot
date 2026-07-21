@@ -2,6 +2,7 @@ aiohappyeyeballs==2.7.1
 aiohttp==3.14.1
 aiosignal==1.4.0
 aiosqlite==0.22.1
+anyio==4.14.2
 asyncpg==0.31.0
 attrs==26.1.0
 audioop-lts==0.2.2
@@ -17,6 +18,9 @@ discord.py==2.7.1
 Flask==3.1.3
 frozendict==2.4.7
 frozenlist==1.8.0
+h11==0.16.0
+httpcore==1.0.9
+httpx==0.28.1
 idna==3.18
 itsdangerous==2.2.0
 Jinja2==3.1.6
@@ -46,3 +50,4 @@ websockets==16.1
 Werkzeug==3.1.8
 yarl==1.24.2
 yfinance==0.2.66
+yolab-quote @ git+https://github.com/Yakitori197/yolab-quote.git@main

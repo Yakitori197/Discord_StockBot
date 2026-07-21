@@ -1,8 +1,13 @@
 # Direct runtime dependencies are pinned for reproducible Render builds.
 discord.py==2.7.1
-yfinance==0.2.66
 aiohttp==3.14.1
-requests==2.34.2
 flask==3.1.3
 aiosqlite==0.22.1
 asyncpg==0.31.0
+
+# 行情資料統一由 yolab-quote 提供：台股代碼正規化（含 00631L 這類槓桿／
+# 反向 ETF）、yfinance 與 Yahoo 雙資料源自動備援、中文名稱對照、線上搜尋。
+# [yfinance] extra 帶入 yfinance 並鎖在 0.2 家族（1.x 是不相容的大改版）。
+# 原本直接列的 yfinance / requests 由套件接手；requests 仍會以傳遞相依存在。
+# 註：Render 的 buildCommand 讀的是 requirements.lock，改這裡也要同步改那邊。
+yolab-quote[yfinance] @ git+https://github.com/Yakitori197/yolab-quote.git@main

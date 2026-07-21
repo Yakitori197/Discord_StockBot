@@ -9,17 +9,17 @@ import sys
 import discord
 from discord.ext import commands
 from discord import app_commands
-import yfinance as yf
 from datetime import datetime, timedelta
 import asyncio
 from typing import Optional, Tuple
 import os
-import re
-import requests
 from threading import Thread
 import signal
 import logging
 from flask import Flask
+
+import yolab_quote as yq
+from yolab_quote import QuoteClient
 
 import reliability
 
@@ -31,6 +31,11 @@ logger = logging.getLogger("discord_stockbot")
 
 # 就緒狀態：區分 liveness（行程存活）與 readiness（Discord 連線完成）
 readiness = reliability.ReadinessState()
+
+# 行情來源：yfinance 優先、Yahoo JSON 端點備援（兩者無共用程式路徑，
+# 其中一個掛掉不會連帶失效）。30 秒報價快取讓 !market 這類一次查多檔的
+# 指令不會重複打同一個端點。
+_quotes = QuoteClient(ttl=30, max_workers=8)
 
 # ===== Flask 保活 / 健康檢查 =====
 app = Flask(__name__)
@@ -101,289 +106,10 @@ async def setup_hook():
     await load_cogs()
 
 # ===== 台股代碼對應中文名稱 =====
-TW_STOCK_NAMES = {
-    '2330': '台積電',
-    '2317': '鴻海',
-    '2454': '聯發科',
-    '2308': '台達電',
-    '2412': '中華電',
-    '2881': '富邦金',
-    '2882': '國泰金',
-    '2891': '中信金',
-    '2884': '玉山金',
-    '1301': '台塑',
-    '1303': '南亞',
-    '1326': '台化',
-    '1216': '統一',
-    '3008': '大立光',
-    '2382': '廣達',
-    '2357': '華碩',
-    '2353': '宏碁',
-    '3231': '緯創',
-    '4938': '和碩',
-    '3711': '日月光投控',
-    '2303': '聯電',
-    '2379': '瑞昱',
-    '6415': '矽力-KY',
-    '2603': '長榮',
-    '2609': '陽明',
-    '2615': '萬海',
-    '2618': '長榮航',
-    '2610': '華航',
-    '2002': '中鋼',
-    '1101': '台泥',
-    '1102': '亞泥',
-    '2886': '兆豐金',
-    '2887': '台新金',
-    '2880': '華南金',
-    '2883': '開發金',
-    '2885': '元大金',
-    '2892': '第一金',
-    '2912': '統一超',
-    '2207': '和泰車',
-    '2301': '光寶科',
-    '2345': '智邦',
-    '2395': '研華',
-    '2408': '南亞科',
-    '2474': '可成',
-    '2492': '華新科',
-    '3034': '聯詠',
-    '3037': '欣興',
-    '3045': '台灣大',
-    '3481': '群創',
-    '3661': '世芯-KY',
-    '3665': '貿聯-KY',
-    '4904': '遠傳',
-    '5871': '中租-KY',
-    '5876': '上海商銀',
-    '5880': '合庫金',
-    '6505': '台塑化',
-    '6669': '緯穎',
-    '2327': '國巨',
-    '2347': '聯強',
-    '2352': '佳世達',
-    '2356': '英業達',
-    '2360': '致茂',
-    '2376': '技嘉',
-    '2377': '微星',
-    '2383': '台光電',
-    '2385': '群光',
-    '2388': '威盛',
-    '2401': '凌陽',
-    '2409': '友達',
-    '2449': '京元電子',
-    '2451': '創見',
-    '2498': '宏達電',
-    '3017': '奇鋐',
-    '3023': '信邦',
-    '3044': '健鼎',
-    '3189': '景碩',
-    '3443': '創意',
-    '3515': '華擎',
-    '3533': '嘉澤',
-    '3596': '智易',
-    '3617': '碩天',
-    '3653': '健策',
-    '3702': '大聯大',
-    '4919': '新唐',
-    '4966': '譜瑞-KY',
-    '5269': '祥碩',
-    '6239': '力成',
-    '6271': '同欣電',
-    '6285': '啟碁',
-    '6409': '旭隼',
-    '6446': '藥華藥',
-    '6488': '環球晶',
-    '6515': '穎崴',
-    '6531': '愛普',
-    '6547': '高端疫苗',
-    '6552': '易華電',
-    '6592': '和潤企業',
-    '6756': '威鍇',
-    '6770': '力積電',
-    '8046': '南電',
-    '8454': '富邦媒',
-}
-
-
-# ===== 常用股票名稱對照表 =====
-# 可以根據需求擴充
-STOCK_NAME_MAP = {
-    # 美股科技巨頭（含常見拼寫變體）
-    'nvidia': 'NVDA',
-    'nvida': 'NVDA',      # 常見拼錯
-    'nVidia': 'NVDA',
-    'geforce': 'NVDA',    # 產品名
-    'apple': 'AAPL',
-    'iphone': 'AAPL',     # 產品名
-    'microsoft': 'MSFT',
-    'msft': 'MSFT',
-    'windows': 'MSFT',    # 產品名
-    'google': 'GOOGL',
-    'alphabet': 'GOOGL',
-    'youtube': 'GOOGL',   # 子公司
-    'amazon': 'AMZN',
-    'amzn': 'AMZN',
-    'aws': 'AMZN',        # 服務名
-    'meta': 'META',
-    'facebook': 'META',
-    'fb': 'META',
-    'instagram': 'META',  # 子公司
-    'whatsapp': 'META',   # 子公司
-    'tesla': 'TSLA',
-    'tsla': 'TSLA',
-    'netflix': 'NFLX',
-    'nflx': 'NFLX',
-    'amd': 'AMD',
-    'ryzen': 'AMD',       # 產品名
-    'radeon': 'AMD',      # 產品名
-    'intel': 'INTC',
-    'intc': 'INTC',
-    'qualcomm': 'QCOM',
-    'qcom': 'QCOM',
-    'snapdragon': 'QCOM', # 產品名
-    'broadcom': 'AVGO',
-    'avgo': 'AVGO',
-    'adobe': 'ADBE',
-    'adbe': 'ADBE',
-    'photoshop': 'ADBE',  # 產品名
-    'salesforce': 'CRM',
-    'crm': 'CRM',
-    'oracle': 'ORCL',
-    'orcl': 'ORCL',
-    'ibm': 'IBM',
-    'cisco': 'CSCO',
-    'csco': 'CSCO',
-    'paypal': 'PYPL',
-    'pypl': 'PYPL',
-    'uber': 'UBER',
-    'airbnb': 'ABNB',
-    'abnb': 'ABNB',
-    'spotify': 'SPOT',
-    'spot': 'SPOT',
-    'zoom': 'ZM',
-    'shopify': 'SHOP',
-    'shop': 'SHOP',
-    'snowflake': 'SNOW',
-    'snow': 'SNOW',
-    'palantir': 'PLTR',
-    'pltr': 'PLTR',
-    'coinbase': 'COIN',
-    'robinhood': 'HOOD',
-    'hood': 'HOOD',
-    
-    # 美股其他知名公司
-    'berkshire': 'BRK-B',
-    'jpmorgan': 'JPM',
-    'visa': 'V',
-    'mastercard': 'MA',
-    'walmart': 'WMT',
-    'costco': 'COST',
-    'nike': 'NKE',
-    'disney': 'DIS',
-    'cocacola': 'KO',
-    'coca-cola': 'KO',
-    'pepsi': 'PEP',
-    'mcdonalds': 'MCD',
-    "mcdonald's": 'MCD',
-    'starbucks': 'SBUX',
-    'boeing': 'BA',
-    'lockheed': 'LMT',
-    'exxon': 'XOM',
-    'chevron': 'CVX',
-    'pfizer': 'PFE',
-    'johnson': 'JNJ',
-    'procter': 'PG',
-    'pg': 'PG',
-    
-    # ETF
-    'qqq': 'QQQ',
-    'spy': 'SPY',
-    'voo': 'VOO',
-    'vti': 'VTI',
-    'arkk': 'ARKK',
-    'soxx': 'SOXX',
-    'smh': 'SMH',
-    
-    # 台股熱門（中文名稱）
-    '台積電': '2330.TW',
-    '鴻海': '2317.TW',
-    '聯發科': '2454.TW',
-    '台達電': '2308.TW',
-    '中華電': '2412.TW',
-    '富邦金': '2881.TW',
-    '國泰金': '2882.TW',
-    '中信金': '2891.TW',
-    '玉山金': '2884.TW',
-    '台塑': '1301.TW',
-    '南亞': '1303.TW',
-    '台化': '1326.TW',
-    '統一': '1216.TW',
-    '大立光': '3008.TW',
-    '廣達': '2382.TW',
-    '華碩': '2357.TW',
-    '宏碁': '2353.TW',
-    '緯創': '3231.TW',
-    '和碩': '4938.TW',
-    '日月光': '3711.TW',
-    '聯電': '2303.TW',
-    '瑞昱': '2379.TW',
-    '矽力': '6415.TW',
-    '長榮': '2603.TW',
-    '陽明': '2609.TW',
-    '萬海': '2615.TW',
-    '長榮航': '2618.TW',
-    '華航': '2610.TW',
-    
-    # 台股英文簡稱
-    'tsmc': '2330.TW',
-    'foxconn': '2317.TW',
-    'mediatek': '2454.TW',
-    'delta': '2308.TW',
-    'asus': '2357.TW',
-    'acer': '2353.TW',
-    'umc': '2303.TW',
-    
-    # 港股
-    '騰訊': '0700.HK',
-    'tencent': '0700.HK',
-    '阿里巴巴': '9988.HK',
-    'alibaba': '9988.HK',
-    '美團': '3690.HK',
-    'meituan': '3690.HK',
-    '小米': '1810.HK',
-    'xiaomi': '1810.HK',
-    '京東': '9618.HK',
-    'jd': '9618.HK',
-    '百度': '9888.HK',
-    'baidu': '9888.HK',
-    '網易': '9999.HK',
-    'netease': '9999.HK',
-    'bilibili': '9626.HK',
-    '比亞迪': '1211.HK',
-    'byd': '1211.HK',
-    
-    # 指數
-    'sp500': '^GSPC',
-    's&p500': '^GSPC',
-    's&p': '^GSPC',
-    'dow': '^DJI',
-    'dowjones': '^DJI',
-    'nasdaq': '^IXIC',
-    '那斯達克': '^IXIC',
-    '道瓊': '^DJI',
-    '台股': '^TWII',
-    '加權': '^TWII',
-    '加權指數': '^TWII',
-    '恆生': '^HSI',
-    'hangseng': '^HSI',
-    '日經': '^N225',
-    'nikkei': '^N225',
-}
-
-# 自動將 TW_STOCK_NAMES 中的中文名稱加入 STOCK_NAME_MAP
-for code, name in TW_STOCK_NAMES.items():
-    STOCK_NAME_MAP[name] = f"{code}.TW"
+# 中文名稱對照表已移入 yolab-quote。該套件的內建表合併了本專案原本的
+# TW_STOCK_NAMES / STOCK_NAME_MAP 與 LINE bot 那一份（合併時零衝突，只是
+# 涵蓋範圍不同），查詢一律走 yq.get_name() 與 yq.resolve()，不再各自維護。
+# 要補自家代號請用 yolab_quote.names.register()。
 
 
 def format_number(num: float, decimal: int = 2) -> str:
@@ -409,43 +135,27 @@ def get_change_emoji(change: float) -> str:
 
 
 def get_tw_stock_chinese_name(symbol: str) -> Optional[str]:
-    """獲取台股的中文名稱"""
-    # 從 symbol 提取數字代碼 (例如 2330.TW -> 2330)
-    code = symbol.replace('.TW', '').replace('.TWO', '')
-    return TW_STOCK_NAMES.get(code)
+    """獲取股票的中文名稱。
+
+    改用 yolab-quote 的內建對照表：該表已合併本專案原有的 TW_STOCK_NAMES
+    與 LINE bot 那一份，涵蓋範圍比原本更廣，也不必再各自維護一份。
+    交易所後綴由套件處理（2330.TW 與 2330 都可查）。
+    """
+    return yq.get_name(symbol)
 
 
 def search_stock_by_name(query: str) -> Optional[str]:
-    """
-    使用 Yahoo Finance 搜尋股票
-    返回最匹配的股票代碼
+    """線上搜尋股票，返回最匹配的代碼。
+
+    改用 yolab-quote 的 search_symbols()，行為與原本相同（同一個 Yahoo
+    端點），但逾時與錯誤處理由套件統一負責。
     """
     try:
-        # 使用 yfinance 的搜尋功能
-        url = f"https://query2.finance.yahoo.com/v1/finance/search"
-        params = {
-            'q': query,
-            'quotesCount': 5,
-            'newsCount': 0,
-            'listsCount': 0,
-            'enableFuzzyQuery': True,
-            'quotesQueryId': 'tss_match_phrase_query'
-        }
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-        }
-        
-        response = requests.get(url, params=params, headers=headers, timeout=10)
-        data = response.json()
-        
-        if 'quotes' in data and len(data['quotes']) > 0:
-            # 返回第一個結果的代碼
-            return data['quotes'][0]['symbol']
-        
+        results = yq.search_symbols(query, limit=1)
+    except yq.QuoteError as exc:
+        print(f"Search error: {exc}")
         return None
-    except Exception as e:
-        print(f"Search error: {e}")
-        return None
+    return results[0].symbol if results else None
 
 
 def resolve_stock_symbol(user_input: str) -> Tuple[str, str]:
@@ -458,97 +168,91 @@ def resolve_stock_symbol(user_input: str) -> Tuple[str, str]:
     3. 完整代碼（如 AAPL, 2330.TW）-> 直接使用
     """
     user_input = user_input.strip()
-    original_input = user_input
-    
-    # 1. 檢查是否為純數字（台股代碼）
-    if re.match(r'^\d{4,6}$', user_input):
-        symbol = f"{user_input}.TW"
-        return symbol, None  # 不顯示識別訊息
-    
-    # 2. 檢查是否已經是完整的代碼格式（含後綴）
-    if re.match(r'^[\w\-\.]+\.(TW|HK|T|L|PA|DE|SS|SZ)$', user_input.upper()):
-        return user_input.upper(), None
-    
-    # 3. 檢查是否在名稱對照表中（不分大小寫）
-    lookup_key = user_input.lower()
-    if lookup_key in STOCK_NAME_MAP:
-        symbol = STOCK_NAME_MAP[lookup_key]
-        return symbol, None
-    
-    # 4. 如果看起來像美股代碼（1-5個英文字母），直接使用
-    if re.match(r'^[A-Za-z]{1,5}$', user_input):
-        return user_input.upper(), None  # 不顯示識別訊息
-    
-    # 5. 嘗試線上搜尋
+    if not user_input:
+        return user_input, None
+
+    # 交給 yolab-quote：它涵蓋台股代碼正規化、中文名稱與英文別名（含拼錯
+    # 變體）。原本這裡用 `^\d{4,6}$` 判斷台股，會漏掉 00631L / 00632R
+    # 這類帶字尾的槓桿／反向 ETF，導致它們被當成美股查詢。
+    resolved = yq.resolve(user_input)
+    if resolved:
+        return resolved, None
+
+    # 對照表查不到才走線上搜尋。
     print(f"Searching online for: {user_input}")
     search_result = search_stock_by_name(user_input)
     if search_result:
         return search_result, None
-    
-    # 6. 都找不到，返回原始輸入嘗試
+
     return user_input.upper(), None
+
+
+def _load_history(symbol: str, days: int) -> Tuple[list, Optional[str], str]:
+    """取得日 K，連同顯示用的名稱與幣別。
+
+    回傳 (bars, name, currency)；查不到時 bars 為空 list。
+    名稱與幣別需另查一次報價（走 30 秒快取，通常不會多打一次網路）；
+    拿不到就退回代碼與 USD，不讓它擋住歷史資料本身。
+    """
+    try:
+        bars = _quotes.get_bars(symbol, days)
+    except yq.QuoteError:
+        return [], None, 'USD'
+
+    name = symbol
+    currency = 'USD'
+    try:
+        quote = _quotes.get_quote(symbol)
+        name = yq.get_name(quote.symbol) or quote.name or symbol
+        currency = quote.currency or 'USD'
+    except yq.QuoteError:
+        pass
+    return bars, name, currency
 
 
 def get_stock_info(symbol: str) -> dict:
     """獲取股票資訊"""
     try:
-        stock = yf.Ticker(symbol)
-        info = stock.info
-        hist = stock.history(period="5d")
-        
-        if hist.empty:
-            return None
-        
-        # 取得最新交易日資料
-        latest = hist.iloc[-1]
-        
-        # 計算漲跌
-        if len(hist) >= 2:
-            prev_close = hist.iloc[-2]['Close']
-            change = latest['Close'] - prev_close
-            change_percent = (change / prev_close) * 100
-        else:
-            change = 0
-            change_percent = 0
-        
-        # 獲取三個月歷史資料來計算三個月最高/最低
-        hist_3m = stock.history(period="3mo")
-        if not hist_3m.empty:
-            three_month_high = hist_3m['High'].max()
-            three_month_low = hist_3m['Low'].min()
-        else:
-            three_month_high = None
-            three_month_low = None
-        
-        # 獲取貨幣資訊
-        currency = info.get('currency', 'USD')
-        
-        # 獲取名稱 - 如果是台股，優先使用中文名稱
-        name = info.get('longName', info.get('shortName', symbol))
-        if '.TW' in symbol.upper() or '.TWO' in symbol.upper():
-            chinese_name = get_tw_stock_chinese_name(symbol.upper())
-            if chinese_name:
-                name = chinese_name
-        
+        quote = _quotes.get_quote(symbol)
+
+        # 三個月高低與均量：用套件的日 K 計算（約 63 個交易日）。
+        three_month_high = None
+        three_month_low = None
+        avg_volume = None
+        try:
+            bars = _quotes.get_bars(symbol, 63)
+        except yq.QuoteError:
+            bars = []          # 拿不到歷史不影響即時報價，欄位留 None
+        if bars:
+            three_month_high = max(bar.high for bar in bars)
+            three_month_low = min(bar.low for bar in bars)
+            volumes = [bar.volume for bar in bars if bar.volume is not None]
+            if volumes:
+                avg_volume = sum(volumes) / len(volumes)
+
+        # 優先顯示中文名稱；套件的對照表同時涵蓋台股與美股。
+        name = yq.get_name(quote.symbol) or quote.name or quote.symbol
+
         return {
-            'symbol': symbol.upper(),
+            'symbol': quote.symbol,
             'name': name,
-            'currency': currency,
-            'open': latest['Open'],
-            'high': latest['High'],
-            'low': latest['Low'],
-            'close': latest['Close'],
-            'volume': latest['Volume'],
-            'change': change,
-            'change_percent': change_percent,
-            'market_cap': info.get('marketCap'),
-            'pe_ratio': info.get('trailingPE'),
+            'currency': quote.currency or 'USD',
+            'open': quote.open,
+            'high': quote.high,
+            'low': quote.low,
+            'close': quote.price,
+            'volume': quote.volume,
+            'change': quote.change,
+            'change_percent': quote.change_percent,
+            'market_cap': quote.extra.get('market_cap'),
+            'pe_ratio': quote.extra.get('pe_ratio'),
             'three_month_high': three_month_high,
             'three_month_low': three_month_low,
-            'avg_volume': info.get('averageVolume'),
-            'dividend_yield': info.get('dividendYield'),
-            'sector': info.get('sector', 'N/A'),
-            'industry': info.get('industry', 'N/A'),
+            'avg_volume': avg_volume,
+            # 已是百分比（套件負責換算），顯示時不可再乘 100。
+            'dividend_yield': quote.extra.get('dividend_yield'),
+            'sector': quote.extra.get('sector', 'N/A'),
+            'industry': quote.extra.get('industry', 'N/A'),
         }
     except Exception as e:
         print(f"Error fetching stock info: {e}")
@@ -648,7 +352,9 @@ def create_stock_embed(data: dict, resolve_msg: str = None) -> discord.Embed:
         inline=True
     )
     
-    dividend_display = f"{data['dividend_yield']*100:.2f}%" if data['dividend_yield'] else 'N/A'
+    # yolab-quote 已把殖利率換算成百分比，這裡不能再乘 100
+    # （原本乘的是 yfinance 回傳的小數比例）。
+    dividend_display = f"{data['dividend_yield']:.2f}%" if data['dividend_yield'] else 'N/A'
     embed.add_field(
         name="💵 股息殖利率",
         value=dividend_display,
@@ -946,40 +652,27 @@ async def search_command(ctx, *, query: str):
     """
     async with ctx.typing():
         try:
-            url = f"https://query2.finance.yahoo.com/v1/finance/search"
-            params = {
-                'q': query,
-                'quotesCount': 10,
-                'newsCount': 0,
-                'listsCount': 0,
-                'enableFuzzyQuery': True,
-            }
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-            }
-            
-            response = requests.get(url, params=params, headers=headers, timeout=10)
-            data = response.json()
-            
-            if 'quotes' not in data or len(data['quotes']) == 0:
+            # 改用套件的搜尋，並丟到 worker thread：原本是在 async 函式裡
+            # 直接跑同步的 requests.get，會卡住 event loop。
+            matches = await asyncio.to_thread(_quotes.search, query, 10)
+
+            if not matches:
                 await ctx.send(f"❌ 找不到與 `{query}` 相關的股票")
                 return
-            
+
             embed = discord.Embed(
                 title=f"🔍 搜尋結果: {query}",
                 color=discord.Color.blue(),
                 timestamp=datetime.now()
             )
-            
+
             results = []
-            for i, quote in enumerate(data['quotes'][:10], 1):
-                symbol = quote.get('symbol', 'N/A')
-                name = quote.get('shortname') or quote.get('longname') or 'N/A'
-                exchange = quote.get('exchange', 'N/A')
-                quote_type = quote.get('quoteType', 'N/A')
-                
-                results.append(f"`{i}.` **{symbol}** - {name}\n    📍 {exchange} | {quote_type}")
-            
+            for i, match in enumerate(matches, 1):
+                results.append(
+                    f"`{i}.` **{match.symbol}** - {match.name}\n"
+                    f"    📍 {match.exchange or 'N/A'} | {match.quote_type or 'N/A'}"
+                )
+
             embed.description = "\n\n".join(results)
             embed.set_footer(text=f"使用 !stock <代碼> 查詢詳細資訊 | 查詢日期：{datetime.now().strftime('%Y-%m-%d')}")
             
@@ -1002,78 +695,66 @@ async def history_command(ctx, query: str, days: int = 7):
     async with ctx.typing():
         try:
             symbol, _ = resolve_stock_symbol(query)
-            stock = yf.Ticker(symbol)
-            hist = stock.history(period=f"{days}d")
-            
-            if hist.empty:
-                # 嘗試線上搜尋
+            bars, name, currency = await asyncio.to_thread(_load_history, symbol, days)
+
+            if not bars:
+                # 對照表解不出來，改走線上搜尋
                 search_result = await asyncio.to_thread(search_stock_by_name, query)
                 if search_result:
                     symbol = search_result
-                    stock = yf.Ticker(symbol)
-                    hist = stock.history(period=f"{days}d")
-            
-            if hist.empty:
+                    bars, name, currency = await asyncio.to_thread(_load_history, symbol, days)
+
+            if not bars:
                 await ctx.send(f"❌ 找不到 `{query}` 的歷史資料")
                 return
-            
-            info = stock.info
-            name = info.get('longName', info.get('shortName', symbol))
-            currency = info.get('currency', 'USD')
-            
-            # 如果是台股，優先使用中文名稱
-            if '.TW' in symbol.upper() or '.TWO' in symbol.upper():
-                chinese_name = get_tw_stock_chinese_name(symbol.upper())
-                if chinese_name:
-                    name = chinese_name
-            
+
             embed = discord.Embed(
                 title=f"📅 {symbol.upper()} - {name} 歷史價格",
-                description=f"最近 {len(hist)} 個交易日",
+                description=f"最近 {len(bars)} 個交易日",
                 color=discord.Color.blue(),
                 timestamp=datetime.now()
             )
-            
+
             # 顯示每日資料（最多10筆）
-            display_data = hist.tail(10)
+            display_data = bars[-10:]
             
             history_text = "```\n"
             history_text += f"{'日期':<12} {'收盤價':>10} {'漲跌%':>8} {'成交量':>12}\n"
             history_text += "-" * 44 + "\n"
             
             prev_close = None
-            for date, row in display_data.iterrows():
-                date_str = date.strftime('%Y-%m-%d')
-                close = row['Close']
-                volume = row['Volume']
-                
+            for bar in display_data:
                 if prev_close:
-                    change_pct = ((close - prev_close) / prev_close) * 100
+                    change_pct = ((bar.close - prev_close) / prev_close) * 100
                     change_str = f"{'+' if change_pct >= 0 else ''}{change_pct:.2f}%"
                 else:
                     change_str = "N/A"
-                
-                history_text += f"{date_str:<12} {close:>10.2f} {change_str:>8} {format_number(volume, 0):>12}\n"
-                prev_close = close
+
+                history_text += (
+                    f"{bar.date:<12} {bar.close:>10.2f} {change_str:>8} "
+                    f"{format_number(bar.volume or 0, 0):>12}\n"
+                )
+                prev_close = bar.close
             
             history_text += "```"
             
             embed.add_field(name="📊 歷史數據", value=history_text, inline=False)
             
             # 統計資訊
+            volumes = [bar.volume for bar in bars if bar.volume is not None]
             embed.add_field(
                 name="📈 期間最高",
-                value=f"{hist['High'].max():.2f} {currency}",
+                value=f"{max(bar.high for bar in bars):.2f} {currency}",
                 inline=True
             )
             embed.add_field(
                 name="📉 期間最低",
-                value=f"{hist['Low'].min():.2f} {currency}",
+                value=f"{min(bar.low for bar in bars):.2f} {currency}",
                 inline=True
             )
             embed.add_field(
                 name="📦 平均成交量",
-                value=format_number(hist['Volume'].mean(), 0),
+                value=format_number(sum(volumes) / len(volumes), 0) if volumes else "N/A",
                 inline=True
             )
             
