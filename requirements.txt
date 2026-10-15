@@ -10,4 +10,6 @@ asyncpg==0.31.0
 # [yfinance] extra 帶入 yfinance 並鎖在 0.2 家族（1.x 是不相容的大改版）。
 # 原本直接列的 yfinance / requests 由套件接手；requests 仍會以傳遞相依存在。
 # 註：Render 的 buildCommand 讀的是 requirements.lock，改這裡也要同步改那邊。
-yolab-quote[yfinance] @ git+https://github.com/Yakitori197/yolab-quote.git@main
+# 固定 release tag，不用 @main：重新部署才不會拿到不同的行情程式碼。
+# 升級時改成新 tag 並跑一次 tests/。從 git 安裝需要 git（見 Dockerfile）。
+yolab-quote[yfinance] @ git+https://github.com/Yakitori197/yolab-quote.git@v0.1.1

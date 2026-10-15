@@ -8,7 +8,13 @@ WORKDIR /app
 RUN addgroup --system app && adduser --system --ingroup app app
 
 COPY requirements.lock .
-RUN pip install --no-cache-dir --requirement requirements.lock
+# yolab-quote installs from a git tag, and slim images ship without git.
+# Install it only for this step and remove it in the same layer.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends git \
+    && pip install --no-cache-dir --requirement requirements.lock \
+    && apt-get purge -y --auto-remove git \
+    && rm -rf /var/lib/apt/lists/*
 
 COPY --chown=app:app . .
 

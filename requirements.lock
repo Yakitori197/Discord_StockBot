@@ -50,4 +50,4 @@ websockets==16.1
 Werkzeug==3.1.8
 yarl==1.24.2
 yfinance==0.2.66
-yolab-quote @ git+https://github.com/Yakitori197/yolab-quote.git@main
+yolab-quote @ git+https://github.com/Yakitori197/yolab-quote.git@v0.1.1
