@@ -15,6 +15,7 @@
 ## 系統需求
 
 - Python 3.13.14
+- Git（安裝固定版本的 yolab-quote 時需要；`git --version` 應可執行）
 - Discord application 與 Bot token
 - 正式部署需要 PostgreSQL
 
@@ -23,10 +24,13 @@
 建立並啟用虛擬環境後安裝依賴：
 
 ```powershell
+$env:PYTHONUTF8 = "1"
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -r requirements.lock
 ```
+
+Windows 的預設編碼可能是 cp950。`PYTHONUTF8=1` 讓 Python 使用 UTF-8，避免讀取含中文註解的依賴檔時發生解碼錯誤；每次開新終端機都要重新設定。若使用 cmd，請先執行 `set PYTHONUTF8=1`。也可單次使用 `python -X utf8 -m pip install -r requirements.lock`。只改 `chcp 65001` 不等於啟用 Python UTF-8 模式。
 
 只在目前的 shell 設定必要值，再啟動 Bot：
 
@@ -81,11 +85,23 @@ docker run --rm -e DISCORD_BOT_TOKEN -e DATABASE_URL discord-stock-bot
 ## 測試
 
 ```powershell
+$env:PYTHONUTF8 = "1"
 python -m pip install -r requirements-dev.txt
+python -m pip check
 python -m pytest -q
 ```
 
 測試涵蓋啟動退避、指令同步閘門、健康端點、SIGTERM、SQLite 非同步 contract、併發 XP 更新，以及遷移 snapshot 的完整性與隱私輸出。
+
+## 自動驗證（GitHub Actions）
+
+[CI workflow](.github/workflows/ci.yml) 在推送 `main`、向 `main` 提出 PR 或手動執行時驗證：
+
+- Windows 與 Linux 使用 `.python-version` 指定的 Python（目前 3.13.14），安裝 `requirements-dev.txt`（包含正式環境的 `requirements.lock`），執行 `pip check` 與既有測試。
+- Linux 使用正式 Dockerfile 建置映像，檢查映像內依賴及 yolab-quote 0.1.1，並以 Flask test client 驗證 `/live` 和尚未連線的 `/health`。
+- CI 設定 `PYTHONUTF8=1`。映像 smoke test 使用 `--network none`，不啟動 Discord 連線、不需要 Bot token 或正式資料庫。
+
+此流程只驗證，不推送映像，也不呼叫 Render 或任何部署 webhook。`render.yaml` 的自動部署維持關閉；CI 通過不代表已驗證正式 Render 部署或真實 PostgreSQL／Discord 連線。
 
 ## 安全與資料
 
